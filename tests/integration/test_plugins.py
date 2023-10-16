@@ -24,7 +24,9 @@ HSTORE_EXTENSION_STATEMENT = "CREATE TABLE hstore_test (value hstore);"
 PG_TRGM_EXTENSION_STATEMENT = "SELECT word_similarity('word', 'two words');"
 PLPYTHON3U_EXTENSION_STATEMENT = 'CREATE FUNCTION plpython_test() RETURNS varchar[] AS $$ return "hello" $$ LANGUAGE plpython3u;'
 UNACCENT_EXTENSION_STATEMENT = "SELECT ts_lexize('unaccent','Hôtel');"
-BLOOM_EXTENSION_STATEMENT = "CREATE TABLE tbloom_test (i int);CREATE INDEX btreeidx ON tbloom_test USING bloom (i);"
+BLOOM_EXTENSION_STATEMENT = (
+    "CREATE TABLE tbloom_test (i int);CREATE INDEX btreeidx ON tbloom_test USING bloom (i);"
+)
 BTREEGIN_EXTENSION_STATEMENT = "CREATE TABLE btree_gin_test (a int4);CREATE INDEX btreeginidx ON btree_gin_test USING GIN (a);"
 BTREEGIST_EXTENSION_STATEMENT = "CREATE TABLE btree_gist_test (a int4);CREATE INDEX btreegistidx ON btree_gist_test USING GIST (a);"
 CUBE_EXTENSION_STATEMENT = "SELECT cube_inter('(0,-1),(1,1)', '(-2),(2)');"
@@ -37,8 +39,12 @@ ISN_EXTENSION_STATEMENT = "SELECT isbn('978-0-393-04002-9');"
 LO_EXTENSION_STATEMENT = "CREATE TABLE lo_test (value lo);"
 LTREE_EXTENSION_STATEMENT = "CREATE TABLE ltree_test (path ltree);"
 OLD_SNAPSHOT_EXTENSION_STATEMENT = "SELECT * from pg_old_snapshot_time_mapping();"
-PG_FREESPACEMAP_EXTENSION_STATEMENT = "CREATE TABLE pg_freespacemap_test (i int);SELECT * FROM pg_freespace('pg_freespacemap_test');"
-PGROWLOCKS_EXTENSION_STATEMENT = "CREATE TABLE pgrowlocks_test (i int);SELECT * FROM pgrowlocks('pgrowlocks_test');"
+PG_FREESPACEMAP_EXTENSION_STATEMENT = (
+    "CREATE TABLE pg_freespacemap_test (i int);SELECT * FROM pg_freespace('pg_freespacemap_test');"
+)
+PGROWLOCKS_EXTENSION_STATEMENT = (
+    "CREATE TABLE pgrowlocks_test (i int);SELECT * FROM pgrowlocks('pgrowlocks_test');"
+)
 PGSTATTUPLE_EXTENSION_STATEMENT = "SELECT * FROM pgstattuple('pg_catalog.pg_proc');"
 PG_VISIBILITY_EXTENSION_STATEMENT = "CREATE TABLE pg_visibility_test (i int);SELECT * FROM pg_visibility('pg_visibility_test'::regclass);"
 SEG_EXTENSION_STATEMENT = "SELECT '10(+-)1'::seg as seg;"
