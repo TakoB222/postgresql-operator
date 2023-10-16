@@ -922,11 +922,16 @@ class PostgresqlOperatorCharm(TypedCharmBase[CharmConfig]):
         Args:
             database: optional database where to enable/disable the extension.
         """
-        for plugin in self.config.plugin_keys():
-            enable = self.config[plugin]
+        for config, enable in self.model.config.items():
+            # Filter config option not related to plugins.
+            if not config.startswith("plugin_"):
+                continue
 
             # Enable or disable the plugin/extension.
-            extension = "_".join(plugin.split("_")[1:-1])
+            extension = "_".join(config.split("_")[1:-1])
+            if "-" in extension:
+                extension = '"{}"'.format(extension)
+
             try:
                 self.postgresql.enable_disable_extension(extension, enable, database)
             except PostgreSQLEnableDisableExtensionError as e:
