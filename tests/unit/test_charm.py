@@ -358,7 +358,7 @@ class TestCharm(unittest.TestCase):
   plugin_tsm_system_time_enable:
     default: false
     type: boolean
-  plugin_uuid-ossp_enable:
+  plugin_uuid_ossp_enable:
     default: false
     type: boolean
   profile:

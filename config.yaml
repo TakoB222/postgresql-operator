@@ -114,7 +114,7 @@ options:
     default: false
     type: boolean
     description: Enable tsm_system_time extension
-  plugin_uuid-ossp_enable:
+  plugin_uuid_ossp_enable:
     default: false
     type: boolean
     description: Enable uuid_ossp extension

@@ -224,7 +224,7 @@ async def test_plugins(ops_test: OpsTest) -> None:
         "plugin_tcn_enable": "True",
         "plugin_tsm_system_rows_enable": "True",
         "plugin_tsm_system_time_enable": "True",
-        "plugin_uuid-ossp_enable": "True",
+        "plugin_uuid_ossp_enable": "True",
     }
     await ops_test.model.applications[DATABASE_APP_NAME].set_config(config)
     await ops_test.model.wait_for_idle(apps=[DATABASE_APP_NAME], status="active")
