@@ -92,6 +92,7 @@ async def test_plugins(ops_test: OpsTest) -> None:
         "plugin_pg_trgm_enable": "True",
         "plugin_plpython3u_enable": "True",
         "plugin_unaccent_enable": "True",
+        "plugin_plpgsql_enable": "True",
     }
     await ops_test.model.applications[DATABASE_APP_NAME].set_config(config)
     await ops_test.model.wait_for_idle(apps=[DATABASE_APP_NAME], status="active")

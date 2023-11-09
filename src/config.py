@@ -40,6 +40,7 @@ class CharmConfig(BaseConfigModel):
     plugin_pg_trgm_enable: bool
     plugin_plpython3u_enable: bool
     plugin_unaccent_enable: bool
+    plugin_plpgsql_enable: bool
     request_date_style: Optional[str]
     request_standard_conforming_strings: Optional[bool]
     request_time_zone: Optional[str]
