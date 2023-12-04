@@ -10,7 +10,7 @@ import pytest as pytest
 from pytest_operator.plugin import OpsTest
 from tenacity import Retrying, stop_after_attempt, wait_exponential
 
-from tests.integration.helpers import (
+from .helpers import (
     CHARM_SERIES,
     DATABASE_APP_NAME,
     construct_endpoint,
@@ -79,12 +79,13 @@ async def cloud_configs(ops_test: OpsTest, github_secrets) -> None:
             bucket_object.delete()
 
 
+@pytest.mark.group(1)
 async def test_none() -> None:
     """Empty test so that the suite will not fail if all tests are skippedi."""
     pass
 
 
-@pytest.mark.uses_secrets
+@pytest.mark.group(1)
 @pytest.mark.abort_on_fail
 async def test_backup(ops_test: OpsTest, cloud_configs: Tuple[Dict, Dict]) -> None:
     """Build and deploy two units of PostgreSQL and then test the backup and restore actions."""
@@ -222,8 +223,8 @@ async def test_backup(ops_test: OpsTest, cloud_configs: Tuple[Dict, Dict]) -> No
     await ops_test.model.remove_application(TLS_CERTIFICATES_APP_NAME, block_until_done=True)
 
 
-@pytest.mark.uses_secrets
-async def test_restore_on_new_cluster(ops_test: OpsTest) -> None:
+@pytest.mark.group(1)
+async def test_restore_on_new_cluster(ops_test: OpsTest, github_secrets) -> None:
     """Test that is possible to restore a backup to another PostgreSQL cluster."""
     charm = await ops_test.build_charm(".")
     database_app_name = f"new-{DATABASE_APP_NAME}"
@@ -300,7 +301,7 @@ async def test_restore_on_new_cluster(ops_test: OpsTest) -> None:
     connection.close()
 
 
-@pytest.mark.uses_secrets
+@pytest.mark.group(1)
 async def test_invalid_config_and_recovery_after_fixing_it(
     ops_test: OpsTest, cloud_configs: Tuple[Dict, Dict]
 ) -> None:
