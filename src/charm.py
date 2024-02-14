@@ -6,15 +6,17 @@
 import json
 import logging
 import os
+import platform
 import subprocess
 import time
 from typing import Dict, List, Literal, Optional, Set, get_args
 
+from charms.data_platform_libs.v0.data_interfaces import DataPeer, DataPeerUnit
 from charms.data_platform_libs.v0.data_models import TypedCharmBase
-from charms.data_platform_libs.v0.data_secrets import SecretCache, generate_secret_label
 from charms.grafana_agent.v0.cos_agent import COSAgentProvider
 from charms.operator_libs_linux.v2 import snap
 from charms.postgresql_k8s.v0.postgresql import (
+    REQUIRED_PLUGINS,
     PostgreSQL,
     PostgreSQLCreateUserError,
     PostgreSQLEnableDisableExtensionError,
@@ -88,6 +90,7 @@ from utils import new_password
 logger = logging.getLogger(__name__)
 
 NO_PRIMARY_MESSAGE = "no primary in the cluster"
+EXTENSIONS_DEPENDENCY_MESSAGE = "Unsatisfied plugin dependencies. Please check the logs"
 
 Scopes = Literal[APP_SCOPE, UNIT_SCOPE]
 
@@ -101,7 +104,31 @@ class PostgresqlOperatorCharm(TypedCharmBase[CharmConfig]):
     def __init__(self, *args):
         super().__init__(*args)
 
-        self.secrets = SecretCache(self)
+        self.peer_relation_app = DataPeer(
+            self,
+            relation_name=PEER,
+            additional_secret_fields=[
+                "monitoring-password",
+                "operator-password",
+                "replication-password",
+                "rewind-password",
+            ],
+            secret_field_name=SECRET_INTERNAL_LABEL,
+            deleted_label=SECRET_DELETED_LABEL,
+        )
+        self.peer_relation_unit = DataPeerUnit(
+            self,
+            relation_name=PEER,
+            additional_secret_fields=[
+                "key",
+                "csr",
+                "cauth",
+                "cert",
+                "chain",
+            ],
+            secret_field_name=SECRET_INTERNAL_LABEL,
+            deleted_label=SECRET_DELETED_LABEL,
+        )
 
         juju_version = JujuVersion.from_environ()
         if juju_version.major > 2:
@@ -207,43 +234,24 @@ class PostgresqlOperatorCharm(TypedCharmBase[CharmConfig]):
 
     def _translate_field_to_secret_key(self, key: str) -> str:
         """Change 'key' to secrets-compatible key field."""
+        if not JujuVersion.from_environ().has_secrets:
+            return key
         key = SECRET_KEY_OVERRIDES.get(key, key)
         new_key = key.replace("_", "-")
         return new_key.strip("-")
-
-    def _safe_get_secret(self, scope: Scopes, label: str) -> SecretCache:
-        """Safety measure, for upgrades between versions based on secret URI usage to others with labels usage.
-
-        If the secret can't be retrieved by label, we search for the uri -- and if found, we "stick" the
-        label on the secret for further usage.
-        """
-        secret_uri = self._peer_data(scope).get(SECRET_INTERNAL_LABEL, None)
-        secret = self.secrets.get(label, secret_uri)
-
-        # Since now we switched to labels, the databag reference can be removed
-        if secret_uri and secret and scope == APP_SCOPE and self.unit.is_leader():
-            self._peer_data(scope).pop(SECRET_INTERNAL_LABEL, None)
-        return secret
 
     def get_secret(self, scope: Scopes, key: str) -> Optional[str]:
         """Get secret from the secret storage."""
         if scope not in get_args(Scopes):
             raise RuntimeError("Unknown secret scope.")
 
-        if value := self._peer_data(scope).get(key, None):
-            return value
-
-        if JujuVersion.from_environ().has_secrets:
-            label = generate_secret_label(self, scope)
-            secret = self._safe_get_secret(scope, label)
-
-            if not secret:
-                return
-
-            secret_key = self._translate_field_to_secret_key(key)
-            value = secret.get_content().get(secret_key)
-            if value != SECRET_DELETED_LABEL:
-                return value
+        peers = self.model.get_relation(PEER)
+        secret_key = self._translate_field_to_secret_key(key)
+        if scope == APP_SCOPE:
+            value = self.peer_relation_app.fetch_my_relation_field(peers.id, secret_key)
+        else:
+            value = self.peer_relation_unit.fetch_my_relation_field(peers.id, secret_key)
+        return value
 
     def set_secret(self, scope: Scopes, key: str, value: Optional[str]) -> Optional[str]:
         """Set secret from the secret storage."""
@@ -253,52 +261,24 @@ class PostgresqlOperatorCharm(TypedCharmBase[CharmConfig]):
         if not value:
             return self.remove_secret(scope, key)
 
-        if JujuVersion.from_environ().has_secrets:
-            # Charm must have been upgraded since last run
-            # We move from databag to secrets
-            self._peer_data(scope).pop(key, None)
-
-            secret_key = self._translate_field_to_secret_key(key)
-            label = generate_secret_label(self, scope)
-            secret = self._safe_get_secret(scope, label)
-            if not secret:
-                self.secrets.add(label, {secret_key: value}, scope)
-            else:
-                content = secret.get_content()
-                content.update({secret_key: value})
-                secret.set_content(content)
-            return label
+        peers = self.model.get_relation(PEER)
+        secret_key = self._translate_field_to_secret_key(key)
+        if scope == APP_SCOPE:
+            self.peer_relation_app.update_relation_data(peers.id, {secret_key: value})
         else:
-            self._peer_data(scope).update({key: value})
+            self.peer_relation_unit.update_relation_data(peers.id, {secret_key: value})
 
     def remove_secret(self, scope: Scopes, key: str) -> None:
         """Removing a secret."""
         if scope not in get_args(Scopes):
             raise RuntimeError("Unknown secret scope.")
 
-        if JujuVersion.from_environ().has_secrets:
-            secret_key = self._translate_field_to_secret_key(key)
-            label = generate_secret_label(self, scope)
-            secret = self.secrets.get(label)
-
-            if not secret:
-                return
-
-            content = secret.get_content()
-
-            if not content.get(secret_key) or content[secret_key] == SECRET_DELETED_LABEL:
-                logger.error(f"Non-existing secret {scope}:{key} was attempted to be removed.")
-                return
-
-            content[secret_key] = SECRET_DELETED_LABEL
-            secret.set_content(content)
-            # Just in case we started on databag
-            self._peer_data(scope).pop(key, None)
+        peers = self.model.get_relation(PEER)
+        secret_key = self._translate_field_to_secret_key(key)
+        if scope == APP_SCOPE:
+            self.peer_relation_app.delete_relation_data(peers.id, [secret_key])
         else:
-            try:
-                self._peer_data(scope).pop(key)
-            except KeyError:
-                logger.error(f"Non-existing secret {scope}:{key} was attempted to be removed.")
+            self.peer_relation_unit.delete_relation_data(peers.id, [secret_key])
 
     @property
     def is_cluster_initialised(self) -> bool:
@@ -497,6 +477,18 @@ class PostgresqlOperatorCharm(TypedCharmBase[CharmConfig]):
             event.defer()
             return
 
+        # Restart the workload if it's stuck on the starting state after a timeline divergence
+        # due to a backup that was restored.
+        if not self.is_primary and (
+            self._patroni.member_replication_lag == "unknown"
+            or int(self._patroni.member_replication_lag) > 1000
+        ):
+            self._patroni.reinitialize_postgresql()
+            logger.debug("Deferring on_peer_relation_changed: reinitialising replica")
+            self.unit.status = MaintenanceStatus("reinitialising replica")
+            event.defer()
+            return
+
         # Start or stop the pgBackRest TLS server service when TLS certificate change.
         if not self.backup.start_stop_pgbackrest_service():
             logger.debug(
@@ -504,6 +496,8 @@ class PostgresqlOperatorCharm(TypedCharmBase[CharmConfig]):
             )
             event.defer()
             return
+
+        self.backup.coordinate_stanza_fields()
 
         self.backup.check_stanza()
 
@@ -536,12 +530,14 @@ class PostgresqlOperatorCharm(TypedCharmBase[CharmConfig]):
             and event.relation.data[event.unit].get("ip-to-remove") is not None
         ):
             ip_to_remove = event.relation.data[event.unit].get("ip-to-remove")
+            logger.info("Removing %s from the cluster due to IP change", ip_to_remove)
             try:
                 self._patroni.remove_raft_member(ip_to_remove)
             except RemoveRaftMemberFailedError:
                 logger.debug("Deferring on_peer_relation_changed: failed to remove raft member")
                 return False
-            self._remove_from_members_ips(ip_to_remove)
+            if ip_to_remove in self.members_ips:
+                self._remove_from_members_ips(ip_to_remove)
         self._add_members(event)
         return True
 
@@ -824,6 +820,7 @@ class PostgresqlOperatorCharm(TypedCharmBase[CharmConfig]):
 
         # Remove departing units when the leader changes.
         for ip in self._get_ips_to_remove():
+            logger.info("Removing %s from the cluster", ip)
             self._remove_from_members_ips(ip)
 
         self.update_config()
@@ -882,8 +879,8 @@ class PostgresqlOperatorCharm(TypedCharmBase[CharmConfig]):
             database: optional database where to enable/disable the extension.
         """
         spi_module = ["refint", "autoinc", "insert_username", "moddatetime"]
-        original_status = self.unit.status
         plugins_exception = {"uuid_ossp": '"uuid-ossp"'}
+        original_status = self.unit.status
         extensions = {}
         # collect extensions
         for plugin in self.config.plugin_keys():
@@ -895,15 +892,32 @@ class PostgresqlOperatorCharm(TypedCharmBase[CharmConfig]):
                 for ext in spi_module:
                     extensions[ext] = enable
                 continue
-            if extension in plugins_exception:
-                extension = plugins_exception[extension]
+            extension = plugins_exception.get(extension, extension)
+            if self._check_extension_dependencies(extension, enable):
+                self.unit.status = BlockedStatus(EXTENSIONS_DEPENDENCY_MESSAGE)
+                return
             extensions[extension] = enable
+        if self.is_blocked and self.unit.status.message == EXTENSIONS_DEPENDENCY_MESSAGE:
+            self.unit.status = ActiveStatus()
         self.unit.status = WaitingStatus("Updating extensions")
         try:
             self.postgresql.enable_disable_extensions(extensions, database)
         except PostgreSQLEnableDisableExtensionError as e:
             logger.exception("failed to change plugins: %s", str(e))
         self.unit.status = original_status
+
+    def _check_extension_dependencies(self, extension: str, enable: bool) -> bool:
+        skip = False
+        if enable and extension in REQUIRED_PLUGINS:
+            for ext in REQUIRED_PLUGINS[extension]:
+                if not self.config[f"plugin_{ext}_enable"]:
+                    skip = True
+                    logger.exception(
+                        "cannot enable %s, extension required %s to be enabled before",
+                        extension,
+                        ext,
+                    )
+        return skip
 
     def _get_ips_to_remove(self) -> Set[str]:
         """List the IPs that were part of the cluster but departed."""
@@ -969,12 +983,9 @@ class PostgresqlOperatorCharm(TypedCharmBase[CharmConfig]):
         cache = snap.SnapCache()
         postgres_snap = cache[POSTGRESQL_SNAP_NAME]
 
-        if (
-            postgres_snap.revision
-            != list(
-                filter(lambda snap_package: snap_package[0] == POSTGRESQL_SNAP_NAME, SNAP_PACKAGES)
-            )[0][1]["revision"]
-        ):
+        if postgres_snap.revision != list(
+            filter(lambda snap_package: snap_package[0] == POSTGRESQL_SNAP_NAME, SNAP_PACKAGES)
+        )[0][1]["revision"].get(platform.machine()):
             logger.debug(
                 "Early exit _setup_exporter: snap was not refreshed to the right version yet"
             )
@@ -1278,9 +1289,15 @@ class PostgresqlOperatorCharm(TypedCharmBase[CharmConfig]):
                 snap_package = snap_cache[snap_name]
 
                 if not snap_package.present or refresh:
-                    if snap_version.get("revision"):
+                    if revision := snap_version.get("revision"):
+                        try:
+                            revision = revision[platform.machine()]
+                        except Exception:
+                            logger.error("Unavailable snap architecture %s", platform.machine())
+                            raise
+                        channel = snap_version.get("channel", "")
                         snap_package.ensure(
-                            snap.SnapState.Latest, revision=snap_version["revision"]
+                            snap.SnapState.Latest, revision=revision, channel=channel
                         )
                         snap_package.hold()
                     else:
@@ -1369,6 +1386,14 @@ class PostgresqlOperatorCharm(TypedCharmBase[CharmConfig]):
 
     def update_config(self, is_creating_backup: bool = False) -> bool:
         """Updates Patroni config file based on the existence of the TLS files."""
+        if (
+            self.model.config.get("profile-limit-memory") is not None
+            and self.model.config.get("profile_limit_memory") is not None
+        ):
+            raise ValueError(
+                "Both profile-limit-memory and profile_limit_memory are set. Please use only one of them."
+            )
+
         enable_tls = self.is_tls_enabled
         limit_memory = None
         if self.config.profile_limit_memory:
@@ -1404,11 +1429,11 @@ class PostgresqlOperatorCharm(TypedCharmBase[CharmConfig]):
 
         self._validate_config_options()
 
-        self._patroni.update_parameter_controller_by_patroni(
-            "max_connections", max(4 * os.cpu_count(), 100)
-        )
-        self._patroni.update_parameter_controller_by_patroni(
-            "max_prepared_transactions", self.config.memory_max_prepared_transactions
+        self._patroni.bulk_update_parameters_controller_by_patroni(
+            {
+                "max_connections": max(4 * os.cpu_count(), 100),
+                "max_prepared_transactions": self.config.memory_max_prepared_transactions,
+            }
         )
 
         restart_postgresql = self.is_tls_enabled != self.postgresql.is_tls_enabled()
