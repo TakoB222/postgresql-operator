@@ -83,6 +83,7 @@ POSTGIS_RASTER_STATEMENT = "CREATE TABLE test_postgis_raster (name varchar, rast
 VECTOR_EXTENSION_STATEMENT = (
     "CREATE TABLE vector_test (id bigserial PRIMARY KEY, embedding vector(3));"
 )
+TIMESCALEDB_EXTENSION_STATEMENT = "CREATE TABLE conditions (time TIMESTAMPTZ NOT NULL);SELECT create_hypertable('conditions', by_range('time'));"
 
 
 @pytest.mark.runner(["self-hosted", "linux", "X64", "jammy", "large"])
@@ -157,6 +158,7 @@ async def test_plugins(ops_test: OpsTest) -> None:
         "plugin_postgis_raster_enable": POSTGIS_RASTER_STATEMENT,
         "plugin_postgis_topology_enable": POSTGIS_TOPOLOGY_STATEMENT,
         "plugin_vector_enable": VECTOR_EXTENSION_STATEMENT,
+        "plugin_timescaledb_enable": TIMESCALEDB_EXTENSION_STATEMENT,
     }
 
     def enable_disable_config(enabled: False):
